@@ -58,6 +58,56 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+struct hBV20_Pulse {
+  uint32_t last_pulse;
+  uint8_t pulse_count;
+} hBV20;
+
+void BV20_Init() {
+  hBV20.last_pulse = 0;
+  hBV20.pulse_count = 0;
+}
+
+void BV20_Reset(struct hBV20_Pulse *hBV20) {
+  hBV20->last_pulse = 0;
+  hBV20->pulse_count = 0;
+}
+
+bool BV20_PollState(struct hBV20_Pulse *hBV20, uint32_t timeout) {
+    static bool was_down = false;
+
+    volatile uint32_t current_time = HAL_GetTick();
+
+    volatile GPIO_PinState gpio_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15);
+
+    if (( gpio_state == GPIO_PIN_RESET ) && !was_down) {
+      hBV20->last_pulse = current_time;
+      (hBV20->pulse_count)++;
+
+      was_down = true;
+
+      return false;
+    } else if ( gpio_state == GPIO_PIN_SET && was_down) {
+      was_down = false;
+
+      return false;
+    } else if (( current_time - (hBV20->last_pulse) > timeout ) && (hBV20->last_pulse)) {
+      was_down = false;
+
+      return true;
+    }
+
+    return false;
+}
+
+// struct Coinswitch {
+  // uint16_t last_pulse;
+  // uint8_t pulse_count;
+// } coinswitch;
+
+// void Coinswitch_Init() {
+// }
+
 /* USER CODE END 0 */
 
 /**
@@ -92,6 +142,8 @@ int main(void)
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
 
+  BV20_Init();
+
   uint8_t HID_buffer[8] = {0};
   extern USBD_HandleTypeDef hUsbDeviceFS;
   HID_buffer[0] = 0x01;
@@ -112,6 +164,8 @@ int main(void)
   keyboardHID.key2 = 0;
   keyboardHID.key3 = 0;
 
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -121,24 +175,29 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    bool was_down = false;
 
-    GPIO_PinState gpio_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15);
+    if (BV20_PollState(&hBV20, 200)) {
+      uint8_t i = 0;
 
-    if (( gpio_state == GPIO_PIN_RESET ) && !was_down) {
-      keyboardHID.key1 = 0x0E;
+      for (i = 0; i < hBV20.pulse_count; i++) {
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
 
-      USBD_HID_SendReport(&hUsbDeviceFS, &keyboardHID, sizeof(struct keyboardHID_t));
+        keyboardHID.key1 = 0x0E;
 
-      HAL_Delay(30);
+        USBD_HID_SendReport(&hUsbDeviceFS, &keyboardHID, sizeof(struct keyboardHID_t));
 
-      keyboardHID.key1 = 0;
+        HAL_Delay(30);
 
-      USBD_HID_SendReport(&hUsbDeviceFS, &keyboardHID, sizeof(struct keyboardHID_t));
+        keyboardHID.key1 = 0;
 
-      was_down = true;
-    } else if ( gpio_state == GPIO_PIN_SET ) {
-      was_down = false;
+        USBD_HID_SendReport(&hUsbDeviceFS, &keyboardHID, sizeof(struct keyboardHID_t));
+
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+
+        HAL_Delay(50);
+      }
+
+      BV20_Reset(&hBV20);
     }
   }
   /* USER CODE END 3 */
